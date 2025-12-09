@@ -1,4 +1,4 @@
 pyrogram
 python-dotenv
 google-generativeai
-tgcrypto
+Tgcrypto
