@@ -1,0 +1,24 @@
+# Environment files
+.env
+*.env
+
+# Python virtual environments
+venv/
+venv312/
+venv3/
+.venv/
+
+# Pyrogram session files
+*.session
+*.session-journal
+
+# Bytecode
+__pycache__/
+*.pyc
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
