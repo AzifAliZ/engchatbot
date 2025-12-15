@@ -155,9 +155,12 @@ async def chat(_, message):
             system_instruction=full_system_instruction
         )
         
-        # Call generate_content with just the user's message
+        # Call generate_content with the system instruction and user's message
         response = temp_model.generate_content(
-            contents=message.text
+            contents=[
+                {"role": "system", "parts": [full_system_instruction]},
+                {"role": "user", "parts": [message.text]}
+            ]
         )
         
         # Use .text, which is the preferred way to get the response
