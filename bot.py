@@ -137,18 +137,17 @@ User message:
     try:
         await app.send_chat_action(message.chat.id, ChatAction.TYPING)
 
-        response = model.generate_content(prompt)
-        text = response.text.strip() if response.text else ""
+        # ✅ Correct Gemini call
+        response = model.generate_content([{"role": "user", "parts": [prompt]}])
+        text = response.candidates[0].content.parts[0].text
 
         if not text:
-            text = "I didn’t understand that clearly. Can you try again?"
+            text = "Can you say that in another way?"
 
         await message.reply(text)
 
     except Exception as e:
-        await message.reply(
-            "❌ Sorry, I had trouble generating a reply. Please try again."
-        )
+        await message.reply("❌ Sorry, something went wrong. Please try again.")
         print(f"Gemini error for user {uid}: {repr(e)}")
 
 # ---------------- RUN ----------------
