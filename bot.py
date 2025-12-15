@@ -4,7 +4,9 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.enums import ChatAction
 import google.generativeai as genai
-import google.generativeai.types as genai_types # Import types for configuration
+
+# NOTE: The problematic import 'import google.generativeai.types as genai_types' has been removed
+# to prevent the AttributeError.
 
 # Load environment variables
 load_dotenv()
@@ -25,14 +27,16 @@ if not GEMINI_KEY:
 # Gemini setup
 genai.configure(api_key=GEMINI_KEY)
 
-# FIX: Changed model to gemini-2.5-flash (a current supported model) 
-# and REMOVED client_options={"api_version": "v1"} to resolve the NotFound error.
+# FIX 1 (Addressing NotFound error): Initialize model without client_options
+# We will NOT use this 'model' global variable directly for chat, 
+# but rather re-initialize a temporary model in 'chat' to correctly set the system instruction.
 try:
-    model = genai.GenerativeModel("gemini-2.5-flash") 
+    # Use a current, recommended model name
+    initial_model = genai.GenerativeModel("gemini-2.5-flash") 
 except Exception as e:
-    # Fallback in case gemini-2.5-flash is not available for some reason
-    print(f"Failed to load gemini-2.5-flash, trying gemini-1.5-flash: {e}")
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    # Fallback in case gemini-2.5-flash is not available
+    print(f"Failed to load gemini-2.5-flash for initial check, trying gemini-1.5-flash: {e}")
+    initial_model = genai.GenerativeModel("gemini-1.5-flash")
 
 
 # User state
@@ -47,11 +51,12 @@ def scenario_prompt(s):
         "casual": "Act like a friendly English practice partner."
     }.get(s, "Act like a friendly English practice partner.")
 
-    # Combine with general rules for the system instruction
+    # Rules included in the system instruction
     rules = (
         "Rules: - Use simple English - Short sentences - Friendly tone - Help the user improve English"
     )
     
+    # Return the complete system instruction string
     return f"You are an English practice partner. Role: {base_role} {rules}"
 
 
@@ -136,19 +141,25 @@ async def chat(_, message):
     uid = message.from_user.id
     scenario_key = user_scenarios.get(uid, "casual")
     
-    # IMPROVEMENT: Use the system_instruction parameter for better model guiding
+    # Generate the full system instruction string
     full_system_instruction = scenario_prompt(scenario_key)
 
     try:
         await app.send_chat_action(message.chat.id, ChatAction.TYPING)
 
-        # ✅ Corrected Gemini call using system_instruction configuration
-        response = model.generate_content(
-            contents=message.text,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=full_system_instruction
-            )
+        # FIX 2 (Addressing AttributeError): Re-create the model instance 
+        # inside the function using the 'system_instruction' argument, 
+        # which is the most robust way to pass the prompt configuration.
+        temp_model = genai.GenerativeModel(
+            model_name="gemini-2.5-flash", 
+            system_instruction=full_system_instruction
         )
+        
+        # Call generate_content with just the user's message
+        response = temp_model.generate_content(
+            contents=message.text
+        )
+        
         # Use .text, which is the preferred way to get the response
         text = response.text 
 
@@ -158,8 +169,6 @@ async def chat(_, message):
         await message.reply(text)
 
     except Exception as e:
-        # Note: FloodWait is a Telegram error, not a Gemini error. 
-        # Pyrogram usually handles it, but if it persists, you need to import 'time' and add a sleep.
         await message.reply("❌ Sorry, something went wrong. Please try again.")
         print(f"Gemini error for user {uid}: {repr(e)}")
 
