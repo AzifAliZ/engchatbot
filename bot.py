@@ -116,7 +116,6 @@ async def callbacks(_, query):
 async def chat(_, message):
     uid = message.from_user.id
     scenario_key = user_scenarios.get(uid, "casual")
-
     system_instruction = scenario_prompt(scenario_key)
 
     prompt = f"""
@@ -136,21 +135,13 @@ User message:
 """
 
     try:
-        await app.send_chat_action(message.chat.id, "typing")
+        await app.send_chat_action(message.chat.id, ChatAction.TYPING)
 
-        response = model.generate_content(
-            [
-                {
-                    "role": "user",
-                    "parts": [{"text": prompt}]
-                }
-            ]
-        )
+        response = model.generate_content(prompt)
+        text = response.text.strip() if response.text else ""
 
-        text = response.candidates[0].content.parts[0].text
-
-        if not text.strip():
-            text = "I didn’t get that clearly. Can you try saying it another way?"
+        if not text:
+            text = "I didn’t understand that clearly. Can you try again?"
 
         await message.reply(text)
 
