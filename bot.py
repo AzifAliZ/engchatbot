@@ -23,7 +23,7 @@ if not GEMINI_KEY:
 
 # Gemini setup
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+model = genai.GenerativeModel("gemini-1.5-flash", client_options={"api_version": "v1"})
 
 # User state
 user_scenarios = {}
