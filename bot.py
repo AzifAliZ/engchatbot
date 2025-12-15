@@ -4,6 +4,7 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.enums import ChatAction
 import google.generativeai as genai
+import google.generativeai.types as genai_types # Import types for configuration
 
 # Load environment variables
 load_dotenv()
@@ -23,18 +24,36 @@ if not GEMINI_KEY:
 
 # Gemini setup
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash", client_options={"api_version": "v1"})
+
+# FIX: Changed model to gemini-2.5-flash (a current supported model) 
+# and REMOVED client_options={"api_version": "v1"} to resolve the NotFound error.
+try:
+    model = genai.GenerativeModel("gemini-2.5-flash") 
+except Exception as e:
+    # Fallback in case gemini-2.5-flash is not available for some reason
+    print(f"Failed to load gemini-2.5-flash, trying gemini-1.5-flash: {e}")
+    model = genai.GenerativeModel("gemini-1.5-flash")
+
 
 # User state
 user_scenarios = {}
 
 def scenario_prompt(s):
-    return {
+    # Base role instruction
+    base_role = {
         "dating": "Act like a romantic partner. Speak softly and simply.",
         "job": "Act like a job interviewer. Ask simple interview questions.",
         "travel": "Act like a friendly travel guide.",
         "casual": "Act like a friendly English practice partner."
     }.get(s, "Act like a friendly English practice partner.")
+
+    # Combine with general rules for the system instruction
+    rules = (
+        "Rules: - Use simple English - Short sentences - Friendly tone - Help the user improve English"
+    )
+    
+    return f"You are an English practice partner. Role: {base_role} {rules}"
+
 
 # Pyrogram client
 app = Client(
@@ -116,30 +135,22 @@ async def callbacks(_, query):
 async def chat(_, message):
     uid = message.from_user.id
     scenario_key = user_scenarios.get(uid, "casual")
-    system_instruction = scenario_prompt(scenario_key)
-
-    prompt = f"""
-You are an English practice partner.
-
-Scenario: {scenario_key}
-Role: {system_instruction}
-
-Rules:
-- Use simple English
-- Short sentences
-- Friendly tone
-- Help the user improve English
-
-User message:
-{message.text}
-"""
+    
+    # IMPROVEMENT: Use the system_instruction parameter for better model guiding
+    full_system_instruction = scenario_prompt(scenario_key)
 
     try:
         await app.send_chat_action(message.chat.id, ChatAction.TYPING)
 
-        # ✅ Correct Gemini call
-        response = model.generate_content([{"role": "user", "parts": [prompt]}])
-        text = response.candidates[0].content.parts[0].text
+        # ✅ Corrected Gemini call using system_instruction configuration
+        response = model.generate_content(
+            contents=message.text,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=full_system_instruction
+            )
+        )
+        # Use .text, which is the preferred way to get the response
+        text = response.text 
 
         if not text:
             text = "Can you say that in another way?"
@@ -147,6 +158,8 @@ User message:
         await message.reply(text)
 
     except Exception as e:
+        # Note: FloodWait is a Telegram error, not a Gemini error. 
+        # Pyrogram usually handles it, but if it persists, you need to import 'time' and add a sleep.
         await message.reply("❌ Sorry, something went wrong. Please try again.")
         print(f"Gemini error for user {uid}: {repr(e)}")
 
