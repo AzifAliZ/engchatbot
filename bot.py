@@ -2,176 +2,156 @@ import os
 from dotenv import load_dotenv
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.enums import ChatAction
 import google.generativeai as genai
 
 # Load environment variables
 load_dotenv()
 
-# --- Telegram Credentials (NEWLY REQUIRED) ---
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-# --- Gemini Credentials ---
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
-# --- Validation Checks ---
+# Validation
 if not API_ID or not API_HASH:
-    # We must provide the Telegram API credentials (ID and HASH)
-    raise SystemExit("Missing Telegram API_ID or API_HASH in .env. Please check the Pyrogram documentation for setup.")
+    raise SystemExit("❌ Missing API_ID or API_HASH")
 if not BOT_TOKEN:
-    raise SystemExit("Missing BOT_TOKEN in .env")
+    raise SystemExit("❌ Missing BOT_TOKEN")
 if not GEMINI_KEY:
-    raise SystemExit("Missing GEMINI_API_KEY in .env")
+    raise SystemExit("❌ Missing GEMINI_API_KEY")
 
-# Configure Gemini
+# Gemini setup
 genai.configure(api_key=GEMINI_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-# Store each user's selected scenario
+# User state
 user_scenarios = {}
 
-
 def scenario_prompt(s):
-    prompts = {
+    return {
         "dating": "Act like a romantic partner. Speak softly and simply.",
         "job": "Act like a job interviewer. Ask simple interview questions.",
         "travel": "Act like a friendly travel guide.",
         "casual": "Act like a friendly English practice partner."
-    }
-    # Ensure a basic system instruction is always present
-    return prompts.get(s, prompts["casual"])
+    }.get(s, "Act like a friendly English practice partner.")
 
-
-# Create Pyrogram Bot client (NOW includes API_ID and API_HASH)
+# Pyrogram client
 app = Client(
     "engchatbot",
-    api_id=int(API_ID),  # Must be an integer
+    api_id=int(API_ID),
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
-    in_memory=True  # avoids creating a session file
+    in_memory=True
 )
 
-
-# -------- COMMAND HANDLERS --------
-
+# ---------------- START ----------------
 @app.on_message(filters.command("start"))
 async def start(_, message):
+    uid = message.from_user.id
+    current = user_scenarios.get(uid, "casual").capitalize()
+
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("✨ Choose Scenario", callback_data="scenarios")],
         [InlineKeyboardButton("⚙ Settings", callback_data="settings")]
     ])
 
-    # Also display the currently active scenario
-    uid = message.from_user.id
-    current_scenario = user_scenarios.get(uid, "casual").capitalize()
-    
     await message.reply(
-        f"👋 Welcome to English Practice Bot!\n\nCurrent Scenario: **{current_scenario}**\n\nSelect a scenario to begin:",
+        f"👋 Welcome to English Practice Bot!\n\n"
+        f"**Current Scenario:** {current}\n\n"
+        "Choose a scenario to begin:",
         reply_markup=keyboard
     )
 
-
-# -------- BUTTON HANDLERS --------
-
+# ---------------- BUTTONS ----------------
 @app.on_callback_query()
-async def callback_handler(_, query):
-    data = query.data or ""
+async def callbacks(_, query):
+    data = query.data
     uid = query.from_user.id
-    current_scenario = user_scenarios.get(uid, "casual").capitalize()
+    current = user_scenarios.get(uid, "casual").capitalize()
 
-    # Show scenario menu
     if data == "scenarios":
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("❤️ Dating", callback_data="set_dating")],
             [InlineKeyboardButton("💼 Job Interview", callback_data="set_job")],
             [InlineKeyboardButton("✈ Travel", callback_data="set_travel")],
-            [InlineKeyboardButton("💬 Casual Chat", callback_data="set_casual")],
+            [InlineKeyboardButton("💬 Casual", callback_data="set_casual")]
         ])
         await query.message.edit_text(
-            f"Current Scenario: **{current_scenario}**\n\nChoose a new scenario:",
+            f"**Current:** {current}\n\nChoose a scenario:",
             reply_markup=keyboard
         )
-        await query.answer() # Acknowledge the query immediately
+        await query.answer()
         return
 
-    # Set selected scenario
     if data.startswith("set_"):
         scenario = data.replace("set_", "")
         user_scenarios[uid] = scenario
-        
-        # Use a more subtle notification instead of editing the message text
-        await query.answer(f"Scenario selected: {scenario.capitalize()}. Start chatting now!", show_alert=False)
         await query.message.edit_text(
-            f"✅ Scenario selected: **{scenario.capitalize()}**.\n\nYou can start chatting immediately!",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✨ Choose Scenario", callback_data="scenarios")]
-            ])
+            f"✅ Scenario set to **{scenario.capitalize()}**.\n\nStart chatting!"
         )
+        await query.answer()
         return
 
-    # Settings menu
     if data == "settings":
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📚 Change Scenarios", callback_data="scenarios")],
-            [InlineKeyboardButton("❓ Help", callback_data="help")]
-        ])
-        await query.message.edit_text(f"⚙ Settings Menu\n\nCurrent Scenario: **{current_scenario}**", reply_markup=keyboard)
+        await query.message.edit_text(
+            f"⚙ Settings\n\nCurrent Scenario: **{current}**",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📚 Change Scenario", callback_data="scenarios")],
+                [InlineKeyboardButton("❓ Help", callback_data="help")]
+            ])
+        )
         await query.answer()
         return
 
     if data == "help":
-        await query.message.edit_text("Use /start to reset the conversation and select a new scenario. The bot uses the Gemini AI model to help you practice English in various contexts.")
+        await query.message.edit_text(
+            "Send any message and I’ll reply in simple English.\n"
+            "Use scenarios to practice different situations."
+        )
         await query.answer()
-        return
 
-
-# -------- MAIN CHAT HANDLER --------
+# ---------------- CHAT ----------------
 @app.on_message(filters.text & ~filters.command(["start"]))
 async def chat(_, message):
     uid = message.from_user.id
-    scenario_key = user_scenarios.get(uid, "casual")
-    
-    # 1. Get the system instruction for the current scenario
-    system_instruction = scenario_prompt(scenario_key)
+    scenario = user_scenarios.get(uid, "casual")
+    instruction = scenario_prompt(scenario)
 
-    # 2. Construct the full prompt for Gemini
     prompt = f"""
-SYSTEM INSTRUCTION: You are an English practice partner.
-Your persona must be based on the following scenario: {scenario_key} ({system_instruction}).
-Your response should be friendly and helpful.
-MOST IMPORTANTLY: Keep your vocabulary simple and your sentence structures easy to understand, as the user is practicing English.
+You are an English practice partner.
 
-USER INPUT: {message.text}
-YOUR RESPONSE:
+Scenario: {scenario}
+Role: {instruction}
+
+Rules:
+- Simple vocabulary
+- Short sentences
+- Friendly tone
+
+User says:
+{message.text}
+
+Reply:
 """
 
     try:
-        # Use a more structured call if possible, or stick to the simple prompt
-        # Using the prompt structure above implicitly guides the model
-        
-        # Add typing indicator while waiting for AI
-        await app.send_chat_action(message.chat.id, "typing")
-        
-        # Gemini call
+        # ✅ Correct typing indicator
+        await message.reply_chat_action(ChatAction.TYPING)
+
         response = model.generate_content(prompt)
-        text = response.text
-        
+        text = getattr(response, "text", None)
+
         if not text:
-            text = "I received your message, but the AI did not generate a text response. Please try a different message."
+            text = "🙂 I didn’t understand. Can you try again?"
 
         await message.reply(text)
-        
+
     except Exception as e:
-        await message.reply("❌ Sorry — I couldn't generate a response. There was an AI processing error.")
-        print(f"Gemini error for user {uid}: {repr(e)}")
+        print(f"[Gemini ERROR] user={uid} → {e}")
+        await message.reply("❌ Sorry, something went wrong. Try again.")
 
-
-# -------- RUN BOT --------
-
+# ---------------- RUN ----------------
 if __name__ == "__main__":
     print("🤖 Bot is starting up...")
-    try:
-        app.run()
-    except KeyboardInterrupt:
-        print("Stopping bot...")
+    app.run()
