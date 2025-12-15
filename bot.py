@@ -115,41 +115,50 @@ async def callbacks(_, query):
 @app.on_message(filters.text & ~filters.command(["start"]))
 async def chat(_, message):
     uid = message.from_user.id
-    scenario = user_scenarios.get(uid, "casual")
-    instruction = scenario_prompt(scenario)
+    scenario_key = user_scenarios.get(uid, "casual")
+
+    system_instruction = scenario_prompt(scenario_key)
 
     prompt = f"""
 You are an English practice partner.
 
-Scenario: {scenario}
-Role: {instruction}
+Scenario: {scenario_key}
+Role: {system_instruction}
 
 Rules:
-- Simple vocabulary
+- Use simple English
 - Short sentences
 - Friendly tone
+- Help the user improve English
 
-User says:
+User message:
 {message.text}
-
-Reply:
 """
 
     try:
-        # ✅ Correct typing indicator
-        await message.reply_chat_action(ChatAction.TYPING)
+        await app.send_chat_action(message.chat.id, "typing")
 
-        response = model.generate_content(prompt)
-        text = getattr(response, "text", None)
+        response = model.generate_content(
+            [
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt}]
+                }
+            ]
+        )
 
-        if not text:
-            text = "🙂 I didn’t understand. Can you try again?"
+        text = response.candidates[0].content.parts[0].text
+
+        if not text.strip():
+            text = "I didn’t get that clearly. Can you try saying it another way?"
 
         await message.reply(text)
 
     except Exception as e:
-        print(f"[Gemini ERROR] user={uid} → {e}")
-        await message.reply("❌ Sorry, something went wrong. Try again.")
+        await message.reply(
+            "❌ Sorry, I had trouble generating a reply. Please try again."
+        )
+        print(f"Gemini error for user {uid}: {repr(e)}")
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
