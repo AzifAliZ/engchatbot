@@ -149,5 +149,5 @@ async def chat(_, message):
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
-    print("🤖 Bot is starting up...")
+    print(f"🤖 Bot is starting up... (google-genai version: {genai.__version__})")
     app.run()
