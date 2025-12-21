@@ -3,12 +3,10 @@ from dotenv import load_dotenv
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.enums import ChatAction
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
-# NOTE: The problematic import 'import google.generativeai.types as genai_types' has been removed
-# to prevent the AttributeError.
-
-# Load environment variables
+# ---------------- ENV ----------------
 load_dotenv()
 
 API_ID = os.getenv("API_ID")
@@ -16,51 +14,37 @@ API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
-# Validation
-if not API_ID or not API_HASH:
-    raise SystemExit("❌ Missing API_ID or API_HASH")
-if not BOT_TOKEN:
-    raise SystemExit("❌ Missing BOT_TOKEN")
-if not GEMINI_KEY:
-    raise SystemExit("❌ Missing GEMINI_API_KEY")
+if not all([API_ID, API_HASH, BOT_TOKEN, GEMINI_KEY]):
+    raise SystemExit("❌ Missing required environment variables")
 
-# Gemini setup
-genai.configure(api_key=GEMINI_KEY)
+# ---------------- GEMINI ----------------
+# genai.configure moved to client init
 
-# FIX 1 (Addressing NotFound error): Initialize model without client_options
-# We will NOT use this 'model' global variable directly for chat, 
-# but rather re-initialize a temporary model in 'chat' to correctly set the system instruction.
-try:
-    # Use a current, recommended model name
-    initial_model = genai.GenerativeModel("gemini-2.5-flash") 
-except Exception as e:
-    # Fallback in case gemini-2.5-flash is not available
-    print(f"Failed to load gemini-2.5-flash for initial check, trying gemini-1.5-flash: {e}")
-    initial_model = genai.GenerativeModel("gemini-1.5-flash")
+# We will create model dynamically per message
+MODEL_NAME = "gemini-1.5-flash"
 
-
-# User state
+# ---------------- STATE ----------------
 user_scenarios = {}
 
-def scenario_prompt(s):
-    # Base role instruction
-    base_role = {
+def scenario_prompt(scenario: str) -> str:
+    roles = {
         "dating": "Act like a romantic partner. Speak softly and simply.",
         "job": "Act like a job interviewer. Ask simple interview questions.",
         "travel": "Act like a friendly travel guide.",
         "casual": "Act like a friendly English practice partner."
-    }.get(s, "Act like a friendly English practice partner.")
+    }
 
-    # Rules included in the system instruction
-    rules = (
-        "Rules: - Use simple English - Short sentences - Friendly tone - Help the user improve English"
+    return (
+        "You are an English practice assistant.\n"
+        f"Scenario role: {roles.get(scenario, roles['casual'])}\n"
+        "Rules:\n"
+        "- Use simple English\n"
+        "- Short sentences\n"
+        "- Friendly tone\n"
+        "- Help the user improve grammar and vocabulary"
     )
-    
-    # Return the complete system instruction string
-    return f"You are an English practice partner. Role: {base_role} {rules}"
 
-
-# Pyrogram client
+# ---------------- TELEGRAM ----------------
 app = Client(
     "engchatbot",
     api_id=int(API_ID),
@@ -96,7 +80,7 @@ async def callbacks(_, query):
     if data == "scenarios":
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("❤️ Dating", callback_data="set_dating")],
-            [InlineKeyboardButton("💼 Job Interview", callback_data="set_job")],
+            [InlineKeyboardButton("💼 Job", callback_data="set_job")],
             [InlineKeyboardButton("✈ Travel", callback_data="set_travel")],
             [InlineKeyboardButton("💬 Casual", callback_data="set_casual")]
         ])
@@ -138,41 +122,30 @@ async def callbacks(_, query):
 @app.on_message(filters.text & ~filters.command(["start"]))
 async def chat(_, message):
     uid = message.from_user.id
-    scenario_key = user_scenarios.get(uid, "casual")
-    
-    # Generate the full system instruction string
-    full_system_instruction = scenario_prompt(scenario_key)
+    scenario = user_scenarios.get(uid, "casual")
+
+    system_instruction = scenario_prompt(scenario)
 
     try:
         await app.send_chat_action(message.chat.id, ChatAction.TYPING)
 
-        # FIX 2 (Addressing AttributeError): Re-create the model instance 
-        # inside the function using the 'system_instruction' argument, 
-        # which is the most robust way to pass the prompt configuration.
-        temp_model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash", 
-            system_instruction=full_system_instruction
-        )
-        
-        # Call generate_content with the system instruction and user's message
-        response = temp_model.generate_content(
-            contents=[
-                {"role": "system", "parts": [full_system_instruction]},
-                {"role": "user", "parts": [message.text]}
-            ]
-        )
-        
-        # Use .text, which is the preferred way to get the response
-        text = response.text 
+        client = genai.Client(api_key=GEMINI_KEY)
 
-        if not text:
-            text = "Can you say that in another way?"
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=message.text,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction
+            )
+        )
+
+        text = response.text or "Can you say that in another way?"
 
         await message.reply(text)
 
     except Exception as e:
-        await message.reply("❌ Sorry, something went wrong. Please try again.")
-        print(f"Gemini error for user {uid}: {repr(e)}")
+        await message.reply("❌ AI error. Please try again.")
+        print(f"Gemini error for user {uid}: {e}")
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
